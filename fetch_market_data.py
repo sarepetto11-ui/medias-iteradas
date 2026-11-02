@@ -26,6 +26,8 @@ def prepare(frames, now=None):
     start = min(s.index.min() for s in normalized.values()).date()
     schedule = mcal.get_calendar('NYSE').schedule(start_date=start, end_date=now.date())
     rejected = []
+    selected = {}
+    previous_calendar_session = None
     for session, row in schedule.iloc[::-1].iterrows():
         if row.market_close > now:
             rejected.append({'session': str(session.date()), 'reason': 'session not closed'})
@@ -52,13 +54,34 @@ def prepare(frames, now=None):
                                   {'timestamp': t.tz_convert('America/New_York').isoformat(), 'close': float(v)}
                                   for t, v in valid.items()]}
         if not errors:
-            return {'source': 'Yahoo Finance via yfinance', 'interval': '1m', 'period': '5d',
-                    'field': 'Close', 'auto_adjust': False, 'prepost': False,
-                    'timezone': 'America/New_York', 'session': str(session.date()),
-                    'generated_at': now.isoformat(), 'rejected_sessions': rejected,
-                    'instruments': result}
-        rejected.append({'session': str(session.date()), 'issues': errors})
-    raise ValueError('No closed common session with enough valid observations in returned 5d data: ' + json.dumps(rejected))
+            # The pair must be adjacent in the exchange calendar, not merely
+            # the two most recent dates on which the vendor returned data.
+            if selected and previous_calendar_session is not None:
+                older = result
+                newer = selected
+                combined = {}
+                for symbol in SYMBOLS:
+                    first, second = older[symbol], newer[symbol]
+                    combined[symbol] = {
+                        'symbol': symbol,
+                        'sessions': [first, second],
+                        'second_session_start': first['count'],
+                        'observations': first['observations'] + second['observations']}
+                return {'source': 'Yahoo Finance via yfinance', 'interval': '1m', 'period': '5d',
+                        'field': 'Close', 'auto_adjust': False, 'prepost': False,
+                        'timezone': 'America/New_York', 'session': previous_calendar_session,
+                        'generated_at': now.isoformat(), 'rejected_sessions': rejected,
+                        # Original laboratory continues to use only the newer session.
+                        'instruments': newer,
+                        'predictive': {'session_dates': [str(session.date()), previous_calendar_session],
+                                       'instruments': combined}}
+            selected = result
+            previous_calendar_session = str(session.date())
+        else:
+            selected = {}
+            previous_calendar_session = None
+            rejected.append({'session': str(session.date()), 'issues': errors})
+    raise ValueError('No two consecutive closed common sessions with enough valid observations in returned 5d data: ' + json.dumps(rejected))
 
 
 def fetch(output=ROOT / 'market_data.json'):
@@ -70,14 +93,22 @@ def fetch(output=ROOT / 'market_data.json'):
     temp = output.with_suffix('.tmp')
     temp.write_text(json.dumps(payload, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     temp.replace(output)
-    # Portable snapshot for users without a local Python installation.
-    html = (ROOT / 'laboratorio_promedios_definido.html').read_text(encoding='utf-8')
-    embedded = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', r'<')
-    html = html.replace('<script>\nconst $=', '<script>window.MARKET_DATA=' + embedded + ';</script>\n<script>\nconst $=', 1)
-    (output.parent / 'laboratorio_listo.html').write_text(html, encoding='utf-8')
-    for s, instrument in payload['instruments'].items():
-        print(f"{s}: {instrument['session']}, {instrument['count']} original Close values, {instrument['missing_count']} missing minutes")
+    build_portable(payload, output.parent / 'laboratorio_listo.html')
+    for symbol, instrument in payload['predictive']['instruments'].items():
+        for session in instrument['sessions']:
+            print(f"{symbol}: {session['session']}, {session['count']} original Close values, {session['missing_count']} missing minutes")
     return payload
+
+def build_portable(payload, output=ROOT / 'laboratorio_listo.html'):
+    """Embed original data and local experiment scripts; no CDN or server needed."""
+    html = (ROOT / 'laboratorio_promedios_definido.html').read_text(encoding='utf-8')
+    embedded = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', chr(92) + 'u003c')
+    html = html.replace('<script>\nconst $=', '<script>window.MARKET_DATA=' + embedded + ';</script>\n<script>\nconst $=', 1)
+    for filename in ('predictive_engine.js', 'predictive_ui.js'):
+        code = (ROOT / filename).read_text(encoding='utf-8').replace('</script', '<' + chr(92) + '/script')
+        html = html.replace(f'<script src="{filename}"></script>', '<script>\n' + code + '\n</script>')
+    Path(output).write_text(html, encoding='utf-8')
+
 
 if __name__ == '__main__':
     fetch()
