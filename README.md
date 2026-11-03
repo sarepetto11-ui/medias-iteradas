@@ -4,7 +4,7 @@ Conserva el HTML y Plotly incorporado del laboratorio original; no necesita un f
 
 ## Descargar y abrir sin programar
 
-Descargá [laboratorio_descargable.zip](https://github.com/sarepetto11-ui/medias-iteradas/raw/refs/heads/main/laboratorio_descargable.zip), extraelo y abrí `laboratorio_listo.html` con doble clic en Chrome, Edge o Firefox. El selector superior permite elegir **Laboratorio retrospectivo** o **Experimento predictivo**. No hace falta instalar Python. El ZIP es la copia de entrega con datos del 29 y 30 de octubre de 2026; no se actualiza automáticamente. GitHub no ejecuta el HTML en su vista de código.
+Descargá [laboratorio_descargable.zip](https://github.com/sarepetto11-ui/medias-iteradas/raw/refs/heads/main/laboratorio_descargable.zip), extraelo y abrí `laboratorio_listo.html` con doble clic en Chrome, Edge o Firefox. El selector superior permite elegir **Laboratorio retrospectivo** o **Experimento predictivo**. No hace falta instalar Python. El ZIP incluye las dos pestañas de datos y se regenera al actualizar cotizaciones; la copia descargada no se actualiza sola. Las fechas disponibles se muestran en pantalla. GitHub no ejecuta el HTML en su vista de código.
 
 ## Ejecutar
 
@@ -111,3 +111,19 @@ node tests/test_lab.cjs
 `test_predictive.cjs` verifica independencia de precios futuros, anclas Pₜ, inmutabilidad, disponibilidad de referencias pares/impares, pendientes y métricas analíticas, NA, signos y ventanas comunes, y E(n,H). Los tests originales verifican la regresión del laboratorio retrospectivo. Las fixtures artificiales de pruebas no se usan como cotizaciones.
 
 Para la prueba de navegador opcional (requiere Playwright y Chromium instalados): `node tests/test_browser.cjs`. Verifica el HTML servido y la copia portátil, aislamiento de modos, controles, registro, evaluación pendiente y reproducción completa.
+
+
+## Pestañas de datos: intradiarios y diarios
+
+Arriba del laboratorio se puede elegir **Datos intradiarios** o **Datos diarios**, en ambos modos. Los controles y cálculos se mantienen. Los CSV cargados manualmente se conservan por pestaña mientras el archivo siga abierto. Las muestras se ordenan de la más antigua a la más reciente para calcular correctamente los filtros.
+
+- **Intradiarios:** cierres de un minuto de las dos últimas sesiones regulares consecutivas cerradas. El retrospectivo muestra la última sesión y el predictivo inicializa con la anterior.
+- **Diarios:** una ventana de **un año calendario hacia atrás desde el último cierre completo disponible de cada activo**. Se descargan dos años con `interval=1d` para poder recortar exactamente ese año, aunque el último cierre sea anterior a hoy. El calendario excluye la sesión en curso hasta que cierre; respeta fines de semana, feriados y cierres anticipados. El límite izquierdo del año es inclusivo. Se conservan timestamps de Yahoo (en barras diarias representan la fecha de sesión, no la hora efectiva del cierre), precios `Close` sin ajustes y sesiones faltantes, sin rellenar ni interpolar.
+
+En la pestaña diaria cada paso corresponde a una sesión observada, no a un día calendario. El retrospectivo muestra todo el año. En el **experimento predictivo diario** la primera mitad cronológica (floor(N/2) observaciones) inicializa la historia y la segunda emite pronósticos sucesivos; el gráfico marca ese límite. Esta división no cambia las dos sesiones del intradiario. Las proyecciones siguen partiendo de Pₜ y no usan precios posteriores al origen. Los registros de pronósticos diarios e intradiarios están separados y la exportación indica su frecuencia, para evitar mezclar las dos muestras. Cambiar de pestaña no sobrescribe los registros ya emitidos.
+
+El JSON añade `daily.instruments`, con inicio del año solicitado, primera y última sesión observada, observaciones originales, cantidad esperada, sesiones faltantes y descartes inválidos. La muestra diaria se valida por separado de los minutos intradiarios.
+
+Validación de esta actualización: ambos activos tienen **251 cierres diarios del 2025-11-03 al 2026-11-02**, sin sesiones faltantes. Se descargaron también las sesiones intradiarias 2026-10-30 y 2026-11-02. Estos valores describen la copia generada en esta actualización, no una cotización en vivo.
+
+Pruebas: `tests/test_daily.py` verifica año calendario (incluido año bisiesto), exclusión de sesiones abiertas, huecos sin rellenar, precios originales, duplicados e historia insuficiente. La prueba de navegador comprueba ambas pestañas, activos, modos, regreso al intradiario y funcionamiento del archivo portátil. `build_portable` regenera automáticamente el HTML y el ZIP descargable después de cada actualización.

@@ -1,7 +1,8 @@
 (function(){
  'use strict';
  const E=window.Predictive,q=id=>document.getElementById(id);
- const ledger=new E.Ledger();let payload=null,token=0,lastReplay=null;
+ const ledgers={intraday:new E.Ledger(),daily:new E.Ledger()};
+ let ledger=ledgers.intraday,payload=null,token=0,lastReplay=null;
  const colors=['#f4c542','#7ca6ff','#ec81d2'];
  const fmt=v=>Number.isFinite(v)?v.toFixed(6):'NA';
  const layout=title=>({paper_bgcolor:'#161c25',plot_bgcolor:'#161c25',font:{color:'#c5cedb'},
@@ -9,8 +10,14 @@
   xaxis:{title:{text:'Índice de observación (no minutos físicos)'},gridcolor:'#283140'},
   yaxis:{gridcolor:'#283140'},legend:{orientation:'h',y:1.17}});
  const opts={responsive:true,displaylogo:false};
+ function dailyMode(){return window.labFrequency==='daily';}
+ function itemFor(symbol){
+  if(!dailyMode())return payload.predictive.instruments[symbol];
+  const item=payload.daily.instruments[symbol];
+  return {...item,second_session_start:Math.floor(item.observations.length/2)};
+ }
  function state(){
-  const symbol=q('pred-symbol').value,item=payload.predictive.instruments[symbol];
+  const symbol=q('pred-symbol').value,item=itemFor(symbol);
   return {symbol,item,rows:item.observations,t:+q('pred-origin').value,
    params:{symbol,n:+q('pred-n').value,H:+q('pred-h').value,boundary:q('pred-boundary').value},
    evaluation:q('pred-view').value==='evaluation'};
@@ -63,7 +70,7 @@
   const lay=layout(evaluation?'Evaluación posterior':'Pronóstico usando solo historia hasta t');
   lay.shapes=[{type:'line',x0:t,x1:t,y0:0,y1:1,yref:'paper',line:{color:'#fff',dash:'dot'}},
    {type:'line',x0:item.second_session_start,x1:item.second_session_start,y0:0,y1:1,yref:'paper',line:{color:'#8394a8',dash:'dash'}}];
-  lay.annotations=[{x:item.second_session_start,y:1,yref:'paper',text:'Inicio sesión 2',showarrow:false}];
+  lay.annotations=[{x:item.second_session_start,y:1,yref:'paper',text:dailyMode()?'Inicio tramo de evaluación':'Inicio sesión 2',showarrow:false}];
   Plotly.react('pred-chart',traces,lay,opts);
   const bars=[{x:E.names,y:f.slopes,type:'bar',name:'Estimadas en t',marker:{color:colors}}];
   if(result&&result.status==='evaluated')bars.push({x:['Realizada'],y:[result.beta],type:'bar',name:'Realizada después',marker:{color:'#4dd0cf'}});
@@ -72,12 +79,18 @@
  }
  function configure(){
   if(!payload)return;
-  const symbol=q('pred-symbol').value,item=payload.predictive.instruments[symbol];
+  const symbol=q('pred-symbol').value,item=itemFor(symbol);
   q('pred-origin').min=item.second_session_start;q('pred-origin').max=item.observations.length-1;
   q('pred-origin').value=item.second_session_start;
-  q('pred-data-status').textContent=symbol+' · '+item.sessions.map(s=>`${s.session}: ${s.count}/${s.expected_count} cierres, ${s.missing_count} minutos faltantes`).join(' | ')+' · timestamps America/New_York. Sin rellenar precios.';
+  q('pred-data-status').textContent=dailyMode() ? `${symbol} · diarios: ${item.first_session} a ${item.last_session} · ${item.count}/${item.expected_count} cierres · ${item.missing_count} sesiones faltantes · primeras ${item.second_session_start} observaciones para inicializar; restantes para pronósticos. Sin rellenar precios.` : symbol+' · '+item.sessions.map(s=>`${s.session}: ${s.count}/${s.expected_count} cierres, ${s.missing_count} minutos faltantes`).join(' | ')+' · timestamps America/New_York. Sin rellenar precios.';
+  q('pred-intro').textContent=dailyMode()?
+   'Reproducción de un año de cierres diarios. Primera mitad cronológica para inicializar; segunda mitad para emitir pronósticos. Cada paso es una sesión disponible, no un día calendario. Los pronósticos parten de Pₜ y usan solo su historia.':
+   'Reproducción de dos sesiones consecutivas. Cada pronóstico parte del cierre observado Pₜ y usa únicamente su historia. Las capas y el horizonte cuentan observaciones disponibles, no minutos físicos; se conserva el salto entre sesiones.';
+  q('pred-origin-label').textContent=dailyMode()?'Origen en segunda mitad':'Origen en sesión 2';
+  q('pred-aggregate-title').textContent=dailyMode()?'Reproducción de la segunda mitad del año · E(n,H)':'Reproducción completa de la sesión 2 · E(n,H)';
   render();
  }
+ window.addEventListener('lab-frequency-change',()=>{ledger=ledgers[window.labFrequency];configure();});
  q('lab-mode').onchange=()=>{
   const predictive=q('lab-mode').value==='predictive';
   q('retrospective-lab').hidden=predictive;q('predictive-lab').hidden=!predictive;
@@ -88,7 +101,7 @@
  q('pred-replay').onclick=()=>{
   if(!payload||!state().evaluation)return;
   const captured=state(),id=++token;
-  q('pred-replay').disabled=true;q('pred-aggregate-status').textContent='Reproduciendo cronológicamente los orígenes de la sesión 2…';
+  q('pred-replay').disabled=true;q('pred-aggregate-status').textContent='Reproduciendo cronológicamente los orígenes del tramo de evaluación…';
   setTimeout(()=>{
    if(id!==token)return;
    try{
@@ -103,13 +116,14 @@
  };
  q('pred-export').onclick=()=>{
   if(!payload)return;
-  const data={dataset_generated_at:payload.generated_at,sessions:payload.predictive.session_dates,
-   unit:'observations, not physical minutes',forecasts:ledger.values()};
+  const data={dataset_generated_at:payload.generated_at,sessions:dailyMode()?{AAPL:[payload.daily.instruments.AAPL.first_session,payload.daily.instruments.AAPL.last_session],GGAL:[payload.daily.instruments.GGAL.first_session,payload.daily.instruments.GGAL.last_session]}:payload.predictive.session_dates,
+   frequency:window.labFrequency||'intraday',unit:dailyMode()?'observed trading sessions, not calendar days':'observations, not physical minutes',forecasts:ledger.values()};
   const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='pronosticos_emitidos.json';a.click();URL.revokeObjectURL(url);
  };
  async function init(){
   try{
+   await retrospectiveReady;
    let data=window.MARKET_DATA;
    if(!data){const response=await fetch('market_data.json',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);data=await response.json();}
    if(!data.predictive)throw Error('Actualizá los datos con run_lab.py para descargar dos sesiones');

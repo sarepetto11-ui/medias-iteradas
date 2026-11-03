@@ -1,6 +1,6 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const html=fs.readFileSync('laboratorio_promedios_definido.html','utf8');
-const code=html.slice(html.lastIndexOf('<script>')+8,html.indexOf('</script>',html.lastIndexOf('<script>'))).replace('loadMarketData();','');
+const code=html.slice(html.lastIndexOf('<script>')+8,html.indexOf('</script>',html.lastIndexOf('<script>'))).replace('const retrospectiveReady=loadMarketData();','');
 const els={};for(const id of ['symbol','n','h','boundary','nv','hv','metrics','file','status'])els['#'+id]={value:({symbol:'AAPL',n:25,h:30,boundary:'fixed'})[id],replaceChildren(){}};
 const plots={};
 const context={document:{querySelector:s=>els[s]},Option:function(t,v){this.value=v},Plotly:{react:(id,traces)=>{plots[id]=traces}},console};

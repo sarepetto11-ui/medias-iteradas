@@ -4,7 +4,7 @@ const root=path.resolve(__dirname,'..');
 (async()=>{
  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
  const server=http.createServer((req,res)=>{
-  const name=decodeURIComponent(req.url.split('?')[0]).slice(1),allowed=['laboratorio_promedios_definido.html','market_data.json','predictive_engine.js','predictive_ui.js'];
+  const name=decodeURIComponent(req.url.split('?')[0]).slice(1),allowed=['laboratorio_promedios_definido.html','market_data.json','predictive_engine.js','predictive_ui.js','data_frequency_ui.js'];
   if(!allowed.includes(name)){res.writeHead(404);res.end();return;}
   res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.json')?'application/json':'text/html');res.end(fs.readFileSync(path.join(root,name)));
  });
@@ -50,6 +50,34 @@ const root=path.resolve(__dirname,'..');
    assert.equal(await page.locator('#retrospective-lab').isVisible(),true);
    await page.selectOption('#symbol','GGAL');
    assert.equal(await page.evaluate(()=>document.getElementById('projection').data.filter(t=>/RW|Proyección lineal/.test(t.name)).length),3);
+   await page.waitForFunction(()=>!document.getElementById('tab-daily').disabled);
+   const intradayCount=await page.evaluate(()=>document.getElementById('causal').data[0].y.length);
+   await page.click('#tab-daily');
+   assert.equal(await page.getAttribute('#tab-daily','aria-selected'),'true');
+   assert((await page.locator('#status').textContent()).includes('diarios'));
+   const daily=await page.evaluate(()=>({
+    count:document.getElementById('causal').data[0].y.length,
+    values:document.getElementById('causal').data[0].y,
+    expected:window.MARKET_DATA.daily.instruments.GGAL.observations.map(r=>r.close)
+   }));
+   assert(daily.count>240&&daily.count<270);assert.deepEqual(daily.values,daily.expected);
+   await page.selectOption('#lab-mode','predictive');
+   assert((await page.locator('#pred-data-status').textContent()).includes('diarios'));
+   const start=await page.evaluate(()=>+document.getElementById('pred-origin').min);
+   assert.equal(start,Math.floor(daily.count/2));
+   await page.evaluate(()=>{const c=document.getElementById('pred-n');c.value=25;c.dispatchEvent(new Event('input'));});
+   await page.selectOption('#pred-view','evaluation');
+   assert((await page.locator('#pred-current-metrics').textContent()).includes('Pendiente realizada'));
+   await page.selectOption('#pred-view','forecast');
+   assert(!(await page.evaluate(()=>document.getElementById('pred-chart').data.some(t=>/futuros|realizado/.test(t.name)))));
+   await page.selectOption('#pred-symbol','AAPL');
+   assert((await page.locator('#pred-data-status').textContent()).includes('AAPL'));
+   await page.click('#tab-intraday');
+   assert.equal(await page.getAttribute('#tab-intraday','aria-selected'),'true');
+   assert((await page.locator('#pred-data-status').textContent()).includes('minutos faltantes'));
+   await page.selectOption('#lab-mode','retrospective');
+   assert.equal(await page.evaluate(()=>document.getElementById('causal').data[0].y.length),intradayCount);
+   console.log('PASS daily tabs: original closes, year range, both modes, separate predictive histories, return to intraday');
    assert.deepEqual(errors,[]);console.log('PASS browser:',url.startsWith('file:')?'portable file':'HTTP application',summary);
    await page.close();
   }
